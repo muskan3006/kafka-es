@@ -1,33 +1,29 @@
 package com.knoldus.akka
+
 import akka.actor.ActorSystem
 import akka.stream.alpakka.elasticsearch._
 import akka.stream.alpakka.elasticsearch.scaladsl._
 import akka.stream.scaladsl.Flow
 import akka.{Done, NotUsed}
-import com.knoldus.common.utils.{CommonFlows, ResourceCompanion}
+import com.knoldus.common.utils.{CommonFlows, Play2Spray, ResourceCompanion}
 import com.knoldus.elasticsearch.api.ElasticsearchClient.ElasticsearchIndex
 import com.typesafe.config.Config
 import org.elasticsearch.client.RestClient
 import org.slf4j.{Logger, LoggerFactory}
+import play.api.libs.json.Format
 import spray.json.JsonWriter
 
-
-
-
 trait AkkaElasticsearchProducer {
-  private val log: Logger = LoggerFactory.getLogger(getClass)
-
   type WriteFlow[A] = Flow[WriteMessage[A, NotUsed], Seq[WriteResult[A, NotUsed]], NotUsed]
   val defaultMetaExtractor: Any => Map[String, String] = _ => Map.empty[String, String]
+  private val log: Logger = LoggerFactory.getLogger(getClass)
 
   /**
    * Create a Flow to write objects to Elasticsearch based on the objects' ResourceCompanion.  This is most likely the
    * function you want to use.
-   *
-   * Equivalent to writeRCToESContext[A](rc)(actorSystem, log, AkkaElasticsearchProducer.Context.implicitly[A]).
    */
   def writeRCToES[A](rc: ResourceCompanion[A])(implicit actorSystem: ActorSystem, log: Logger,
-                                               jsonWriter: JsonWriter[A], client: RestClient,
+                                               playF: Format[A], client: RestClient,
                                                esIndex: String,
                                                settings: AkkaElasticsearchProducer.Settings = AkkaElasticsearchProducer.Settings.default):
   Flow[A, Done, NotUsed] = {
@@ -61,6 +57,7 @@ trait AkkaElasticsearchProducer {
         Done
       }
   }
+
   /**
    * Creates a Flow to write objects to Elasticsearch, passing along whether they succeeded or failed.
    */
@@ -68,8 +65,8 @@ trait AkkaElasticsearchProducer {
     context.flow(docType)
 
   private def toWriteMessageFlow[A](
-                                     idExtractor: A => String)= {
-    Flow[A].map( singleData =>WriteMessage.createIndexMessage(idExtractor(singleData), singleData))
+                                     idExtractor: A => String) = {
+    Flow[A].map(singleData => WriteMessage.createIndexMessage(idExtractor(singleData), singleData))
   }
 }
 
@@ -97,6 +94,25 @@ object AkkaElasticsearchProducer {
       ElasticsearchWriteSettings().withBufferSize(bufferSize)
   }
 
+  /**
+   * A bundle of things passed around implicitly to create an Elasticsearch Flow.
+   *
+   * @param client   the RestClient to use to connect to Elasticsearch
+   * @param esIndex  the index on which to operate
+   * @param settings the settings passed to an ElasticSearchFlow
+   */
+  class Context[A](val client: RestClient, val esIndex: ElasticsearchIndex, val settings: Settings, val jsonWriter: JsonWriter[A]) {
+    /**
+     * Create an Elasticsearch Flow for this context to write objects to a given type.
+     */
+    def flow(docType: String): Flow[WriteMessage[A, NotUsed], Seq[WriteResult[A, NotUsed]], NotUsed] =
+      ElasticsearchFlow.create[A](
+        indexName = esIndex,
+        typeName = docType,
+        settings = settings.toES
+      )(client, jsonWriter)
+  }
+
   object Settings {
     /**
      * The default; corresponds to the default settings in Alpakka's elasticsearch connector
@@ -113,39 +129,21 @@ object AkkaElasticsearchProducer {
     }
   }
 
-  /**
-   * A bundle of things passed around implicitly to create an Elasticsearch Flow.
-   *
-   * @param client the RestClient to use to connect to Elasticsearch
-   * @param esIndex the index on which to operate
-   * @param settings
-   */
-  class Context[A](val client: RestClient, val esIndex: ElasticsearchIndex, val settings: Settings, val jsonWriter: JsonWriter[A]) {
-    /**
-     * Create an Elasticsearch Flow for this context to write objects to a given type.
-     */
-    def flow(docType: String): Flow[WriteMessage[A, NotUsed], Seq[WriteResult[A, NotUsed]], NotUsed] =
-      ElasticsearchFlow.create[A](
-        indexName = esIndex,
-        typeName = docType,
-        settings = settings.toES
-      )(client, jsonWriter)
-  }
-
   object Context {
     /**
      * Explicitly construct a Context based on values in the implicit scope.  A Spray JSON format will be generated
      * based on the Play JSON format.
      *
-     * @param client a restClient
-     * @param esIndex index
-     * @param settings settings
-     * @param jsonWriter a json spray writer
+     * @param client   a restClient to use to connect to ElasticSearch
+     * @param esIndex  index the index on which to operate
+     * @param settings settings settings used by ElasticSearchFlow
+     * @param playF    implicit play format
      */
-    implicit def implicitly[A](implicit client: RestClient, esIndex: String, settings: Settings, jsonWriter: JsonWriter[A]): Context[A] =
-      apply(client, esIndex, settings, jsonWriter)
+    implicit def implicitly[A](implicit client: RestClient, esIndex: String, settings: Settings, playF: Format[A]): Context[A] =
+      apply(client, esIndex, settings, Play2Spray(playF))
 
     def apply[A](client: RestClient, esIndex: String, settings: Settings, jsonWriter: JsonWriter[A]): Context[A] =
       new Context(client, esIndex, settings, jsonWriter)
   }
+
 }

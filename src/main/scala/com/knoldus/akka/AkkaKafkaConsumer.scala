@@ -1,7 +1,6 @@
 package com.knoldus.akka
 
 import java.io.{BufferedInputStream, ByteArrayInputStream, InputStream}
-import java.util.UUID
 
 import akka.actor.ActorSystem
 import akka.kafka.ConsumerMessage.{CommittableMessage, CommittableOffset, CommittableOffsetBatch}
@@ -13,8 +12,8 @@ import akka.{Done, NotUsed}
 import com.knoldus.common.MDCProvider
 import com.knoldus.common.services.RestartingStreamFactory
 import com.knoldus.common.utils.CommonFlows
-import com.typesafe.config.{Config, ConfigFactory}
 import com.knoldus.common.utils.CommonFlows._
+import com.typesafe.config.{Config, ConfigFactory}
 import org.apache.commons.compress.compressors.{CompressorException, CompressorStreamFactory}
 import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRecord, RetriableCommitFailedException}
 import org.apache.kafka.common.serialization.{ByteArrayDeserializer, StringDeserializer}
@@ -22,9 +21,9 @@ import org.slf4j.{Logger, LoggerFactory}
 import play.api.libs.json.{Format, Json, Reads}
 
 import scala.collection.immutable.{Seq, Vector}
-import scala.collection.mutable.WrappedArray
-import scala.concurrent.{ExecutionContext, Future}
+import scala.collection.mutable
 import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
 import scala.io.Codec
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
@@ -33,8 +32,8 @@ case class KafkaMessage[Key, Value](key: String, value: Value)
 
 trait AkkaKafkaConsumer {
 
-  import AkkaKafkaConsumer._
   import AkkaKafkaConsumer.Implicits._
+  import AkkaKafkaConsumer._
 
   private implicit class consumerRecordMDC[K, V](consumerRecord: ConsumerRecord[K, V]) extends MDCProvider {
     override def mdcData: Map[String, String] = Map(
@@ -101,9 +100,9 @@ protected val kafkaConsumerGroup = "employee-group"
    * power of the cumulative number of failures exceeds the cumulative number of successes, the stream will fail.
    *
    * Note that due to arithmetic overflow, for a "commit-failure-decay-factor" of _b_, after _f_ failures and _s_
-   * successes, if _s_ - _b^f_ is greater than about 2 billion, the stream will fail; this cannot happen until
+   * successes, if _s_ - _b&#94;f_ is greater than about 2 billion, the stream will fail; this cannot happen until
    * at least 2 billion successful commits.
-   */
+   **/
   private def offsetCommit(parallelism: Int): Flow[CommittableOffsetBatch, Done, NotUsed] = {
     require(parallelism > 0, "Negative parallelism doesn't really make sense, does it?")
     val successDone = Success(Done)
@@ -127,7 +126,7 @@ protected val kafkaConsumerGroup = "employee-group"
       retryIfRetriable(commitBatch) orElse allThrowablesToFailure(commitBatch)
 
     def doCommit(commitBatch: CommittableOffsetBatch): Future[Try[Done]] = {
-      implicit val _ctx = ctx
+      implicit val _ctx: ExecutionContextExecutor = ctx
       commitBatch.commitScaladsl().map(futDoneToSuccessDone)
     }
 
@@ -184,12 +183,12 @@ protected val kafkaConsumerGroup = "employee-group"
    * long enough between restarts such that the old, failed consuming stream will be marked as failed before the new consumer
    * wakes up.
    */
-  val defaultRestartConfig = RestartingStreamFactory(
+  val defaultRestartConfig: RestartingStreamFactory = RestartingStreamFactory(
     minBackOff = defaultMinBackoff,
     maxBackOff = defaultMaxBackoff,
     randomFactor = 0.5,
-    maxRestarts = -1, // no limit
-    onlyOnFailure = false // should never stop unless it fails, but what the heck.
+    maxRestarts = -1 // no limit
+    // should never stop unless it fails, but what the heck.
   )
 
   private def kafkaSourceWithOffsetCommit(
@@ -292,11 +291,8 @@ object AkkaKafkaConsumer {
     private lazy val compressorStreamFactory = new CompressorStreamFactory()
 
     /**
-     * Uncompresses a stream if needed.  Supports up to [[maximumCompressionNesting]] nested layers of compression.
-     * The compression depth is limited to prevent stack overflow.  If support for more layers is needed
-     * for some bizarre reason, calls can be chained without blowing the stack.
-     *
-     * @param possiblyCompressedStream
+     * Uncompresses a stream if needed.
+     * @param possiblyCompressedStream an inputStream
      */
     def uncompressStream(possiblyCompressedStream: InputStream): InputStream = {
       @scala.annotation.tailrec
@@ -327,17 +323,16 @@ object AkkaKafkaConsumer {
 
     private val possibleCodecs: Seq[Codec] = Seq(Codec.UTF8, Codec.ISO8859)
     private val log = LoggerFactory.getLogger(this.getClass)
-    def readLinesFromCompressedText(compressedText: WrappedArray[Byte], possibleCodecs: Seq[Codec] = possibleCodecs): Vector[String] = {
+    def readLinesFromCompressedText(compressedText: mutable.WrappedArray[Byte], possibleCodecs: Seq[Codec] = possibleCodecs): Vector[String] = {
       possibleCodecs match {
         case codec +: otherCodecs => readLinesFromCompressedText(compressedText, codec).getOrElse(readLinesFromCompressedText(compressedText, otherCodecs))
-        case Seq() => {
+        case Seq() =>
           log.warn(s"Error reading compressed text - out of codecs to try")
           Vector()
-        }
       }
     }
 
-    def readLinesFromCompressedText(compressedText: WrappedArray[Byte], codec: Codec): Option[Vector[String]] = {
+    def readLinesFromCompressedText(compressedText: mutable.WrappedArray[Byte], codec: Codec): Option[Vector[String]] = {
       val compressedStream = new ByteArrayInputStream(compressedText.array)
       val uncompressedStream = uncompressStream(compressedStream)
       try {

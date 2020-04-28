@@ -56,7 +56,7 @@ case class FacetResponse(
       val counts = tup._2
       val valueCount = counts.foldLeft(0L)((sum, count) => sum + count)
       (value, valueCount)
-    }.toMap
+    }
     this.copy(values = sumValues)
   }
 }

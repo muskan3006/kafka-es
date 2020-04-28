@@ -1,35 +1,46 @@
 package com.knoldus.models
 
 import com.knoldus.common.utils.{HasDefaultConfig, ResourceCompanion}
+import com.sksamuel.elastic4s.mappings.FieldType.{DateType, StringType}
 import play.api.libs.json.{Format, Json}
-import spray.json.{JsObject, JsString, JsonWriter}
+//create index index mappings("employee-details" as(
+//"empId" typed StringType,
+//"name" typed StringType,
+//"doj" typed DateType,
+//"email" typed StringType
+//))
+//}.map { response => response.isAcknowledged }
+case class Address(no: String,
+                   area: String,
+                   city: String,
+                   state: String
+                  )
 
-//case class Address(houseNo: String, area: String, city: String, state: String)
-//object Address{
-//  implicit val format: Format[Address] = Json.format[Address]
-//}
+object Address {
+  implicit val format: Format[Address] = Json.format[Address]
+}
 
 case class Employee(empId: String,
-                     name: String,
-                     doj: String,
-                     email: String)
+                    name: String,
+                    address: Address,
+                    doj: String,
+                    email: String,
+                    mobileNo:Long,
+                    designation:String,
+                    salary:Int)
 
 object Employee extends ResourceCompanion[Employee] with HasDefaultConfig {
   implicit val format: Format[Employee] = Json.format[Employee]
-  implicit val jsonWriter:JsonWriter[Employee] = (employee:Employee) => {
-    JsObject(
-      "empId" -> JsString(employee.empId),
-      "name" -> JsString(employee.name),
-      "doj" -> JsString(employee.doj),
-    "email" -> JsString(employee.email))
-  }
+
+  implicit val _reads = Json.reads[Employee]
+
+  implicit val defaultWrites = Json.writes[Employee]
+
   override lazy val index: String = config.getString("elasticsearch.index.default")
-  override val resourceType: String = "employee-details"
+  override val resourceType: String = "employee-type"
 
   override def id(obj: Employee): String = obj.empId
 
   override def docType: String = resourceType
 
-
-
-  }
+}
